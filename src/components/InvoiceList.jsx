@@ -1,0 +1,247 @@
+// src/components/InvoiceList.jsx
+import React, { useEffect, useState } from "react";
+import {
+  collection,
+  getDocs,
+  query,
+  where,
+  doc,
+  updateDoc,
+  deleteDoc,
+  writeBatch,
+} from "firebase/firestore";
+import dayjs from "dayjs";
+import { db } from "../firebase";
+import ExportExcel from "./ExportExcel";
+
+// helper to build an array of three consecutive "YYYY-MM" strings
+function getQuarterMonths(startMonth) {
+  const months = [];
+  const start = dayjs(startMonth);
+  for (let i = 0; i < 3; i++) {
+    months.push(start.add(i, "month").format("YYYY-MM"));
+  }
+  return months;
+}
+
+const InvoiceList = () => {
+  // ─── State ──────────────────────────────────────────────────────────
+  const [invoices, setInvoices] = useState([]);
+  const [selectedMonth, setSelectedMonth] = useState(dayjs().format("YYYY-MM"));
+  const [editingId, setEditingId] = useState(null);
+  const [editValues, setEditValues] = useState({});
+
+  // ─── Totals ─────────────────────────────────────────────────────────
+  const totalAmount = invoices.reduce((sum, inv) => sum + (inv.amountWithVAT || 0), 0);
+  const totalVAT    = invoices.reduce((sum, inv) => sum + (inv.vatAmount   || 0), 0);
+
+  // ─── Fetch Monthly Invoices ─────────────────────────────────────────
+  const fetchInvoices = async () => {
+    const q = query(collection(db, "invoices"), where("month", "==", selectedMonth));
+    const snap = await getDocs(q);
+    setInvoices(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+  };
+
+  useEffect(() => {
+    fetchInvoices();
+  }, [selectedMonth]);
+
+  // ─── Single‐Invoice Handlers ────────────────────────────────────────
+  const startEdit = (inv) => {
+    setEditingId(inv.id);
+    setEditValues({ ...inv });
+  };
+  const cancelEdit = () => {
+    setEditingId(null);
+    setEditValues({});
+  };
+  const saveEdit = async () => {
+    const ref = doc(db, "invoices", editingId);
+    const updated = {
+      date: editValues.date,
+      supplierName: editValues.supplierName,
+      vatNo: editValues.vatNo,
+      invoiceNo: editValues.invoiceNo,
+      amountWithVAT: parseFloat(editValues.amountWithVAT),
+      vatAmount: parseFloat(editValues.vatAmount),
+      month: dayjs(editValues.date).format("YYYY-MM"),
+    };
+    await updateDoc(ref, updated);
+    cancelEdit();
+    fetchInvoices();
+  };
+  const deleteInvoice = async (id) => {
+    if (!window.confirm("Are you sure you want to delete this invoice?")) return;
+    await deleteDoc(doc(db, "invoices", id));
+    fetchInvoices();
+  };
+  const handleChange = (e) =>
+    setEditValues({ ...editValues, [e.target.name]: e.target.value });
+
+  // ─── Delete Entire Month ─────────────────────────────────────────────
+  const deleteMonth = async () => {
+    if (
+      !window.confirm(
+        `Delete ALL invoices for ${selectedMonth}? This cannot be undone.`
+      )
+    )
+      return;
+
+    const q = query(collection(db, "invoices"), where("month", "==", selectedMonth));
+    const snap = await getDocs(q);
+    const batch = writeBatch(db);
+    snap.docs.forEach((d) => batch.delete(doc(db, "invoices", d.id)));
+    await batch.commit();
+    fetchInvoices();
+  };
+
+  // ─── Render ─────────────────────────────────────────────────────────
+  return (
+    <div className="max-w-4xl mx-auto mt-10 p-6 bg-white rounded shadow">
+      {/* Month Selector */}
+      <h2 className="text-2xl font-bold mb-4 text-blue-700">
+        Invoices for {selectedMonth}
+      </h2>
+      <div className="mb-4">
+        <label className="block mb-1 font-semibold">Select Month:</label>
+        <input
+          type="month"
+          className="border p-2"
+          value={selectedMonth}
+          onChange={(e) => setSelectedMonth(e.target.value)}
+        />
+      </div>
+
+      {/* Monthly Totals */}
+      <div className="mb-6 p-4 bg-gray-50 rounded">
+        <p className="font-medium">
+          Total Amount (w/ VAT):{" "}
+          <span className="text-blue-700">{totalAmount.toFixed(2)}</span>
+        </p>
+        <p className="font-medium">
+          Total VAT Amount:{" "}
+          <span className="text-blue-700">{totalVAT.toFixed(2)}</span>
+        </p>
+      </div>
+
+      {/* Invoice Table */}
+      {invoices.length === 0 ? (
+        <p className="text-gray-600">No invoices found for this month.</p>
+      ) : (
+        <>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm border">
+              <thead>
+                <tr className="bg-gray-100 text-center">
+                  {[
+                    "Date",
+                    "Supplier",
+                    "Invoice No",
+                    "VAT No",
+                    "Amount (with VAT)",
+                    "VAT Amount",
+                    "Actions",
+                  ].map((h) => (
+                    <th key={h} className="p-2 border">
+                      {h}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {invoices.map((inv) => (
+                  <tr key={inv.id} className="text-center">
+                    {editingId === inv.id ? (
+                      <>
+                        {[
+                          "date",
+                          "supplierName",
+                          "invoiceNo",
+                          "vatNo",
+                          "amountWithVAT",
+                          "vatAmount",
+                        ].map((field) => (
+                          <td key={field} className="border p-2">
+                            <input
+                              {...(field === "date" ? { type: "date" } : {})}
+                              name={field}
+                              value={editValues[field]}
+                              onChange={handleChange}
+                              className="border p-1 w-full"
+                            />
+                          </td>
+                        ))}
+                        <td className="border p-2">
+                          <button
+                            onClick={saveEdit}
+                            className="text-green-700 mr-2"
+                          >
+                            Save
+                          </button>
+                          <button
+                            onClick={cancelEdit}
+                            className="text-gray-500"
+                          >
+                            Cancel
+                          </button>
+                        </td>
+                      </>
+                    ) : (
+                      <>
+                        <td className="border p-2">{inv.date}</td>
+                        <td className="border p-2">{inv.supplierName}</td>
+                        <td className="border p-2">{inv.invoiceNo}</td>
+                        <td className="border p-2">{inv.vatNo}</td>
+                        <td className="border p-2">
+                          {inv.amountWithVAT.toFixed(2)}
+                        </td>
+                        <td className="border p-2">
+                          {inv.vatAmount.toFixed(2)}
+                        </td>
+                        <td className="border p-2">
+                          <button
+                            onClick={() => startEdit(inv)}
+                            className="text-blue-700 mr-2"
+                          >
+                            Edit
+                          </button>
+                          <button
+                            onClick={() => deleteInvoice(inv.id)}
+                            className="text-red-600"
+                          >
+                            Delete
+                          </button>
+                        </td>
+                      </>
+                    )}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          {/* Export / Delete Month Buttons */}
+          <div className="mt-4 flex items-center justify-between px-2">
+            {/* Export */}
+            <ExportExcel
+              data={invoices}
+              filename={`invoices-${selectedMonth}.xlsx`}
+              buttonText="Export Month"
+              buttonClassName="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded"
+            />
+
+            {/* Delete */}
+            <button
+              onClick={deleteMonth}
+              className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded"
+            >
+              Delete Month
+            </button>
+          </div>
+        </>
+      )}
+    </div>
+  );
+};
+
+export default InvoiceList;
