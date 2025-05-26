@@ -5,6 +5,8 @@ import Navbar from "./components/Navbar";
 import InvoiceForm from "./components/InvoiceForm";
 import SupplierPage from "./components/SupplierPage";
 import InvoiceList from "./components/InvoiceList";
+import DailySalesForm from "./components/DailySalesForm";
+import ViewDailySales from "./components/ViewDailySales";
 import QuarterlySummary from "./components/QuarterlySummary";
 import pharmacyImg from "./assets/pharmacy.jpg";
 
@@ -27,15 +29,15 @@ const Dashboard = () => (
 function App() {
   return (
     <div className="min-h-screen bg-gray-100">
-      {/* Navbar is now here, outside of any specific page */}
       <Navbar />
       <div className="h-24" />
-      {/* All pages will render below the navbar */}
       <Routes>
         <Route path="/" element={<Dashboard />} />
         <Route path="/add" element={<InvoiceForm />} />
         <Route path="/supplier" element={<SupplierPage />} />
         <Route path="/invoices" element={<InvoiceList />} />
+        <Route path="/daily-sales" element={<DailySalesForm />} />
+        <Route path="/view-daily-sales" element={<ViewDailySales />} />
         <Route path="/summary" element={<QuarterlySummary />} />
       </Routes>
     </div>

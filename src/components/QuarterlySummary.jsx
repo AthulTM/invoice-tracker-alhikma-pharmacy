@@ -1,9 +1,17 @@
 // src/components/QuarterlySummary.jsx
 import React, { useEffect, useState } from "react";
-import { collection, getDocs, query, where } from "firebase/firestore";
+import {
+  collection,
+  getDocs,
+  query,
+  where,
+  doc,
+  getDoc,
+  setDoc
+} from "firebase/firestore";
 import dayjs from "dayjs";
-import * as XLSX from "xlsx";
 import { db } from "../firebase";
+import * as XLSX from "xlsx";
 
 // helper to get three consecutive YYYY-MM strings
 const getQuarterMonths = (startMonth) => {
@@ -20,27 +28,87 @@ const QuarterlySummary = () => {
   const [quarterInvoices, setQuarterInvoices] = useState([]);
   const [totals, setTotals] = useState({
     totalWithVAT: "0.00",
-    totalVAT: "0.00",
+    totalVAT: "0.00"
   });
 
-  // Fetch invoices + compute totals
+  // new: quarterly sales totals and overrides
+  const [salesTotals, setSalesTotals] = useState({
+    totalSales: 0,
+    totalVATCollected: 0
+  });
+  const [overrideValues, setOverrideValues] = useState({
+    totalSales: "",
+    totalVATCollected: ""
+  });
+  const [editingOverride, setEditingOverride] = useState(false);
+
+  // fetch both invoices and purchase‐VAT totals
   useEffect(() => {
     async function fetchQuarterData() {
       const months = getQuarterMonths(startMonth);
-      let all = [];
-      for (const m of months) {
-        const q = query(collection(db, "invoices"), where("month", "==", m));
-        const snap = await getDocs(q);
-        all.push(...snap.docs.map((d) => ({ id: d.id, ...d.data() })));
-      }
-      setQuarterInvoices(all);
 
-      const totalWithVAT = all.reduce((sum, inv) => sum + (inv.amountWithVAT || 0), 0);
-      const totalVAT = all.reduce((sum, inv) => sum + (inv.vatAmount || 0), 0);
+      // invoices & totals
+      let invs = [];
+      for (const m of months) {
+        const q = query(
+          collection(db, "invoices"),
+          where("month", "==", m)
+        );
+        const snap = await getDocs(q);
+        invs.push(...snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+      }
+      setQuarterInvoices(invs);
+
+      const totalWithVAT = invs.reduce(
+        (sum, inv) => sum + (inv.amountWithVAT || 0),
+        0
+      );
+      const totalVAT = invs.reduce(
+        (sum, inv) => sum + (inv.vatAmount || 0),
+        0
+      );
       setTotals({
         totalWithVAT: totalWithVAT.toFixed(2),
-        totalVAT: totalVAT.toFixed(2),
+        totalVAT: totalVAT.toFixed(2)
       });
+
+      // sales & VAT collected totals
+      // date range from first of startMonth to first of month+3
+      const startDate = `${startMonth}-01`;
+      const endDate = dayjs(startDate).add(3, "month").format("YYYY-MM-DD");
+      const salesQ = query(
+        collection(db, "dailySales"),
+        where("date", ">=", startDate),
+        where("date", "<", endDate)
+      );
+      const salesSnap = await getDocs(salesQ);
+      const daily = salesSnap.docs.map((d) => d.data());
+      const computedSales = daily.reduce((sum, d) => sum + (d.amount || 0), 0);
+      const computedVAT = daily.reduce((sum, d) => sum + (d.vatAmount || 0), 0);
+
+      // see if there's an override doc
+      const overrideRef = doc(db, "quarterlySales", startMonth);
+      const overrideSnap = await getDoc(overrideRef);
+      if (overrideSnap.exists()) {
+        const d = overrideSnap.data();
+        setSalesTotals({
+          totalSales: d.totalSales,
+          totalVATCollected: d.totalVATCollected
+        });
+        setOverrideValues({
+          totalSales: d.totalSales.toFixed(2),
+          totalVATCollected: d.totalVATCollected.toFixed(2)
+        });
+      } else {
+        setSalesTotals({
+          totalSales: computedSales,
+          totalVATCollected: computedVAT
+        });
+        setOverrideValues({
+          totalSales: computedSales.toFixed(2),
+          totalVATCollected: computedVAT.toFixed(2)
+        });
+      }
     }
     fetchQuarterData();
   }, [startMonth]);
@@ -48,11 +116,9 @@ const QuarterlySummary = () => {
   const months = getQuarterMonths(startMonth);
   const monthsDisplay = months.join(", ");
 
-  // Export single-sheet with blank separators
+  // export with labels & separators (unchanged)
   const exportQuarter = () => {
     const aoa = [];
-
-    // Header row
     aoa.push([
       "Month",
       "Date",
@@ -60,18 +126,13 @@ const QuarterlySummary = () => {
       "Invoice No",
       "VAT No",
       "Amount (with VAT)",
-      "VAT Amount",
+      "VAT Amount"
     ]);
-
-    // For each month, push label row + its data + two blank rows
     months.forEach((m) => {
-      // month label
       aoa.push([m, "", "", "", "", "", ""]);
-
-      // rows for that month
       quarterInvoices
         .filter((inv) => inv.month === m)
-        .forEach((inv) => {
+        .forEach((inv) =>
           aoa.push([
             "",
             inv.date,
@@ -79,23 +140,47 @@ const QuarterlySummary = () => {
             inv.invoiceNo,
             inv.vatNo,
             inv.amountWithVAT,
-            inv.vatAmount,
-          ]);
-        });
-
-      // two blank rows as separator
-      aoa.push([]);
-      aoa.push([]);
-      aoa.push([]);
-      aoa.push([]);
-      aoa.push([]);
-      aoa.push([]);
+            inv.vatAmount
+          ])
+        );
+      // blank rows
+      aoa.push([], [], [], [], [], []);
     });
+
+    // ─── append your four summary lines ───────────────────────────
+    aoa.push([]);  // one more blank row
+    aoa.push(["Total Purchase", totals.totalWithVAT]);
+    aoa.push(["Total Sales", salesTotals.totalSales.toFixed(2)]);
+    aoa.push(["Total VAT Given", totals.totalVAT]);
+    aoa.push(["Total VAT Collected", salesTotals.totalVATCollected.toFixed(2)]);
+    // ───────────────────────────────────────────────────────────────
 
     const ws = XLSX.utils.aoa_to_sheet(aoa);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, `Q-${startMonth}`);
     XLSX.writeFile(wb, `invoices-quarter-${startMonth}.xlsx`);
+  };
+
+  // handlers for editing quarterly sales overrides
+  const startEdit = () => setEditingOverride(true);
+  const cancelEdit = () => {
+    setOverrideValues({
+      totalSales: salesTotals.totalSales.toFixed(2),
+      totalVATCollected: salesTotals.totalVATCollected.toFixed(2)
+    });
+    setEditingOverride(false);
+  };
+  const handleChange = (e) =>
+    setOverrideValues({ ...overrideValues, [e.target.name]: e.target.value });
+  const saveEdit = async () => {
+    const ref = doc(db, "quarterlySales", startMonth);
+    const payload = {
+      totalSales: parseFloat(overrideValues.totalSales),
+      totalVATCollected: parseFloat(overrideValues.totalVATCollected)
+    };
+    await setDoc(ref, { ...payload, month: startMonth });
+    setSalesTotals(payload);
+    setEditingOverride(false);
   };
 
   return (
@@ -106,7 +191,9 @@ const QuarterlySummary = () => {
 
       {/* Month picker */}
       <div className="mb-4">
-        <label className="block mb-1 font-semibold">Select Start Month:</label>
+        <label className="block mb-1 font-semibold">
+          Select Start Month:
+        </label>
         <input
           type="month"
           className="border p-2"
@@ -115,22 +202,88 @@ const QuarterlySummary = () => {
         />
       </div>
 
-      {/* Totals */}
+      {/* Purchase Totals */}
       <p className="mb-2 text-gray-700">
         Showing totals for: <strong>{monthsDisplay}</strong>
       </p>
-      <div className="text-right mb-6">
+      <div className="mb-6 p-4 bg-gray-100 rounded text-left mb-6">
         <p>
-          <strong>Total Amount with VAT (3 months):</strong> {totals.totalWithVAT}
+          <strong>Total Purchase (3 months):</strong>{" "}
+          {totals.totalWithVAT}
         </p>
         <p>
-          <strong>Total VAT Amount (3 months):</strong> {totals.totalVAT}
+          <strong>Total VAT Given (3 months):</strong> {totals.totalVAT}
         </p>
+      </div>
+
+      {/* Sales Totals & Overrides */}
+      <div className="mb-6 p-4 bg-gray-100 rounded text-left">
+        {editingOverride ? (
+          <>
+            <div className="mb-2">
+              <label className="font-medium mr-2">Total Sales:</label>
+              <input
+                type="number"
+                name="totalSales"
+                value={overrideValues.totalSales}
+                onChange={handleChange}
+                className="border p-1 w-32"
+              />
+            </div>
+            <div className="mb-2">
+              <label className="font-medium mr-2">
+                Total VAT Collected:
+              </label>
+              <input
+                type="number"
+                name="totalVATCollected"
+                value={overrideValues.totalVATCollected}
+                onChange={handleChange}
+                className="border p-1 w-32"
+              />
+            </div>
+            <button
+              onClick={saveEdit}
+              className="text-green-700 mr-4"
+            >
+              Save
+            </button>
+            <button
+              onClick={cancelEdit}
+              className="text-gray-500"
+            >
+              Cancel
+            </button>
+          </>
+        ) : (
+          <>
+            <p className="font-medium">
+              Total Sales (3 months):{" "}
+              <span className="text-blue-700">
+                {salesTotals.totalSales.toFixed(2)}
+              </span>
+            </p>
+            <p className="font-medium">
+              Total VAT Collected (3 months):{" "}
+              <span className="text-blue-700">
+                {salesTotals.totalVATCollected.toFixed(2)}
+              </span>
+            </p>
+            <button
+              onClick={startEdit}
+              className="text-purple-700 mt-2 underline"
+            >
+              Edit Sales Totals
+            </button>
+          </>
+        )}
       </div>
 
       {/* Detailed 3-month table */}
       {quarterInvoices.length === 0 ? (
-        <p className="text-gray-600 mb-6">No invoices found for this period.</p>
+        <p className="text-gray-600 mb-6">
+          No invoices found for this period.
+        </p>
       ) : (
         <div className="overflow-x-auto mb-6">
           <table className="w-full text-sm border">
@@ -156,8 +309,12 @@ const QuarterlySummary = () => {
                       <td className="border p-2">{inv.supplierName}</td>
                       <td className="border p-2">{inv.invoiceNo}</td>
                       <td className="border p-2">{inv.vatNo}</td>
-                      <td className="border p-2">{inv.amountWithVAT.toFixed(2)}</td>
-                      <td className="border p-2">{inv.vatAmount.toFixed(2)}</td>
+                      <td className="border p-2">
+                        {inv.amountWithVAT.toFixed(2)}
+                      </td>
+                      <td className="border p-2">
+                        {inv.vatAmount.toFixed(2)}
+                      </td>
                     </tr>
                   ))
               )}

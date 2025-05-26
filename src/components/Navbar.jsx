@@ -23,7 +23,7 @@ export default function Navbar() {
             Invoice Tracker
           </Link>
 
-          {/* Hamburger */}
+          {/* Hamburger (mobile) */}
           <button
             className="sm:hidden p-2 focus:outline-none"
             onClick={() => setOpen((o) => !o)}
@@ -37,24 +37,72 @@ export default function Navbar() {
           </button>
 
           {/* Desktop links */}
-          <ul className="hidden sm:flex space-x-6">
-            {[
-              ["/", "Dashboard"],
-              ["/add", "Add Invoice"],
-              ["/supplier", "Add Supplier"],
-              ["/invoices", "View Invoices"],
-              ["/summary", "Quarterly Summary"],
-            ].map(([to, label]) => (
-              <li key={to}>
-                <Link
-                  to={to}
-                  className="hover:underline"
-                  onClick={close}
-                >
-                  {label}
-                </Link>
-              </li>
-            ))}
+          <ul className="hidden sm:flex space-x-6 items-center">
+            <li>
+              <Link to="/" onClick={close} className="hover:underline">
+                Dashboard
+              </Link>
+            </li>
+            <li>
+              <Link to="/add" onClick={close} className="hover:underline">
+                Add Invoice
+              </Link>
+            </li>
+            <li>
+              <Link to="/supplier" onClick={close} className="hover:underline">
+                Add Supplier
+              </Link>
+            </li>
+
+            {/* Invoices dropdown */}
+            <li className="relative group">
+              <button className="hover:underline"> View Invoices</button>
+              <ul className="absolute left-0 top-full w-44 bg-white text-blue-700 shadow-lg rounded hidden group-hover:block z-20">
+                <li>
+                  <Link
+                    to="/invoices"
+                    onClick={close}
+                    className="block px-4 py-2 hover:bg-gray-100"
+                  >
+                      Monthly Summary
+                  </Link>
+                </li>
+                <li>
+                  <Link
+                    to="/summary"
+                    onClick={close}
+                    className="block px-4 py-2 hover:bg-gray-100"
+                  >
+                    Quarterly Summary
+                  </Link>
+                </li>
+              </ul>
+            </li>
+
+            {/* Sales dropdown */}
+            <li className="relative group">
+              <button className="hover:underline">Sales</button>
+              <ul className="absolute left-0 top-full w-44 bg-white text-blue-700 shadow-lg rounded hidden group-hover:block z-20">
+                <li>
+                  <Link
+                    to="/daily-sales"
+                    onClick={close}
+                    className="block px-4 py-2 hover:bg-gray-100"
+                  >
+                    Daily Sales
+                  </Link>
+                </li>
+                <li>
+                  <Link
+                    to="/view-daily-sales"
+                    onClick={close}
+                    className="block px-4 py-2 hover:bg-gray-100"
+                  >
+                    View Daily Sales
+                  </Link>
+                </li>
+              </ul>
+            </li>
           </ul>
         </div>
       </nav>
@@ -80,6 +128,8 @@ export default function Navbar() {
             ["/add", "Add Invoice"],
             ["/supplier", "Add Supplier"],
             ["/invoices", "View Invoices"],
+            ["/daily-sales", "Daily Sales"],
+            ["/view-daily-sales", "View Daily Sales"],
             ["/summary", "Quarterly Summary"],
           ].map(([to, label]) => (
             <li key={to} className="border-b last:border-b-0">

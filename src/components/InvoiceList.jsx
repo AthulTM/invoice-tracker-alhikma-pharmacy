@@ -6,6 +6,8 @@ import {
   query,
   where,
   doc,
+  getDoc,
+  setDoc,
   updateDoc,
   deleteDoc,
   writeBatch,
@@ -31,19 +33,91 @@ const InvoiceList = () => {
   const [editingId, setEditingId] = useState(null);
   const [editValues, setEditValues] = useState({});
 
-  // ─── Totals ─────────────────────────────────────────────────────────
-  const totalAmount = invoices.reduce((sum, inv) => sum + (inv.amountWithVAT || 0), 0);
-  const totalVAT    = invoices.reduce((sum, inv) => sum + (inv.vatAmount   || 0), 0);
+  // sales totals state
+  const [salesTotals, setSalesTotals] = useState({
+    totalSales: 0,
+    totalVATCollected: 0,
+  });
+  const [overrideValues, setOverrideValues] = useState({
+    totalSales: "",
+    totalVATCollected: "",
+  });
+  const [editingSalesTotals, setEditingSalesTotals] = useState(false);
+
+  // ─── Purchase Totals ─────────────────────────────────────────────────
+  const totalAmount = invoices.reduce(
+    (sum, inv) => sum + (inv.amountWithVAT || 0),
+    0
+  );
+  const totalVAT = invoices.reduce(
+    (sum, inv) => sum + (inv.vatAmount || 0),
+    0
+  );
 
   // ─── Fetch Monthly Invoices ─────────────────────────────────────────
   const fetchInvoices = async () => {
-    const q = query(collection(db, "invoices"), where("month", "==", selectedMonth));
+    const q = query(
+      collection(db, "invoices"),
+      where("month", "==", selectedMonth)
+    );
     const snap = await getDocs(q);
     setInvoices(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
   };
 
+  // ─── Fetch Daily Sales & Monthly Override ────────────────────────────
+  const fetchSalesTotals = async () => {
+    // 1) compute from dailySales
+    const allSnap = await getDocs(collection(db, "dailySales"));
+    const all = allSnap.docs.map((d) => d.data());
+    const monthEntries = all.filter((e) =>
+      e.date.startsWith(selectedMonth)
+    );
+    const computedSales = monthEntries.reduce(
+      (sum, e) => sum + (e.amount || 0),
+      0
+    );
+    const computedVAT = monthEntries.reduce(
+      (sum, e) => sum + (e.vatAmount || 0),
+      0
+    );
+
+    // 2) try override doc
+    const overrideRef = doc(db, "monthlySales", selectedMonth);
+    const overrideSnap = await getDoc(overrideRef);
+    if (overrideSnap.exists()) {
+      const data = overrideSnap.data();
+      // guard against missing fields
+      const ts =
+        typeof data.totalSales === "number"
+          ? data.totalSales
+          : computedSales;
+      const tv =
+        typeof data.totalVATCollected === "number"
+          ? data.totalVATCollected
+          : computedVAT;
+
+      setSalesTotals({ totalSales: ts, totalVATCollected: tv });
+      setOverrideValues({
+        totalSales: ts.toFixed(2),
+        totalVATCollected: tv.toFixed(2),
+      });
+    } else {
+      // no override doc
+      setSalesTotals({
+        totalSales: computedSales,
+        totalVATCollected: computedVAT,
+      });
+      setOverrideValues({
+        totalSales: computedSales.toFixed(2),
+        totalVATCollected: computedVAT.toFixed(2),
+      });
+    }
+  };
+
+  // ─── Effects ────────────────────────────────────────────────────────
   useEffect(() => {
     fetchInvoices();
+    fetchSalesTotals();
   }, [selectedMonth]);
 
   // ─── Single‐Invoice Handlers ────────────────────────────────────────
@@ -71,7 +145,8 @@ const InvoiceList = () => {
     fetchInvoices();
   };
   const deleteInvoice = async (id) => {
-    if (!window.confirm("Are you sure you want to delete this invoice?")) return;
+    if (!window.confirm("Are you sure you want to delete this invoice?"))
+      return;
     await deleteDoc(doc(db, "invoices", id));
     fetchInvoices();
   };
@@ -87,12 +162,36 @@ const InvoiceList = () => {
     )
       return;
 
-    const q = query(collection(db, "invoices"), where("month", "==", selectedMonth));
+    const q = query(
+      collection(db, "invoices"),
+      where("month", "==", selectedMonth)
+    );
     const snap = await getDocs(q);
     const batch = writeBatch(db);
     snap.docs.forEach((d) => batch.delete(doc(db, "invoices", d.id)));
     await batch.commit();
     fetchInvoices();
+  };
+
+  // ─── Sales Totals Edit Handlers ──────────────────────────────────────
+  const handleSalesChange = (e) =>
+    setOverrideValues({ ...overrideValues, [e.target.name]: e.target.value });
+  const saveSalesOverride = async () => {
+    const ref = doc(db, "monthlySales", selectedMonth);
+    const updated = {
+      totalSales: parseFloat(overrideValues.totalSales),
+      totalVATCollected: parseFloat(overrideValues.totalVATCollected),
+    };
+    await setDoc(ref, { ...updated, month: selectedMonth });
+    setSalesTotals(updated);
+    setEditingSalesTotals(false);
+  };
+  const cancelSalesEdit = () => {
+    setOverrideValues({
+      totalSales: salesTotals.totalSales.toFixed(2),
+      totalVATCollected: salesTotals.totalVATCollected.toFixed(2),
+    });
+    setEditingSalesTotals(false);
   };
 
   // ─── Render ─────────────────────────────────────────────────────────
@@ -112,16 +211,75 @@ const InvoiceList = () => {
         />
       </div>
 
-      {/* Monthly Totals */}
+      {/* Monthly Totals + Sales Totals */}
       <div className="mb-6 p-4 bg-gray-50 rounded">
         <p className="font-medium">
-          Total Amount (w/ VAT):{" "}
+          Total Purchase Amount (w/ VAT):{" "}
           <span className="text-blue-700">{totalAmount.toFixed(2)}</span>
         </p>
         <p className="font-medium">
-          Total VAT Amount:{" "}
+          Total VAT Given:{" "}
           <span className="text-blue-700">{totalVAT.toFixed(2)}</span>
         </p>
+
+        <div className="mt-4 border-t pt-4">
+          {editingSalesTotals ? (
+            <>
+              <div className="mb-2">
+                <label className="font-medium mr-2">Total Sales:</label>
+                <input
+                  type="number"
+                  name="totalSales"
+                  value={overrideValues.totalSales}
+                  onChange={handleSalesChange}
+                  className="border p-1 w-32"
+                />
+              </div>
+              <div className="mb-2">
+                <label className="font-medium mr-2">
+                  Total VAT Collected:
+                </label>
+                <input
+                  type="number"
+                  name="totalVATCollected"
+                  value={overrideValues.totalVATCollected}
+                  onChange={handleSalesChange}
+                  className="border p-1 w-32"
+                />
+              </div>
+              <button
+                onClick={saveSalesOverride}
+                className="text-green-700 mr-4"
+              >
+                Save Sales
+              </button>
+              <button onClick={cancelSalesEdit} className="text-gray-500">
+                Cancel
+              </button>
+            </>
+          ) : (
+            <>
+              <p className="font-medium">
+                Total Sales:{" "}
+                <span className="text-blue-700">
+                  {salesTotals.totalSales.toFixed(2)}
+                </span>
+              </p>
+              <p className="font-medium">
+                Total VAT Collected:{" "}
+                <span className="text-blue-700">
+                  {salesTotals.totalVATCollected.toFixed(2)}
+                </span>
+              </p>
+              <button
+                onClick={() => setEditingSalesTotals(true)}
+                className="text-blue-700 mt-2"
+              >
+                Edit Sales
+              </button>
+            </>
+          )}
+        </div>
       </div>
 
       {/* Invoice Table */}
@@ -178,10 +336,7 @@ const InvoiceList = () => {
                           >
                             Save
                           </button>
-                          <button
-                            onClick={cancelEdit}
-                            className="text-gray-500"
-                          >
+                          <button onClick={cancelEdit} className="text-gray-500">
                             Cancel
                           </button>
                         </td>
@@ -222,15 +377,19 @@ const InvoiceList = () => {
 
           {/* Export / Delete Month Buttons */}
           <div className="mt-4 flex items-center justify-between px-2">
-            {/* Export */}
             <ExportExcel
               data={invoices}
               filename={`invoices-${selectedMonth}.xlsx`}
               buttonText="Export Month"
               buttonClassName="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded"
+              summary={{
+              totalAmount: totalAmount.toFixed(2),
+              totalVAT: totalVAT.toFixed(2),
+              totalSales: salesTotals.totalSales.toFixed(2),
+              totalVATCollected: salesTotals.totalVATCollected.toFixed(2),
+              }}
             />
 
-            {/* Delete */}
             <button
               onClick={deleteMonth}
               className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded"
