@@ -7,7 +7,7 @@ import {
   where,
   doc,
   getDoc,
-  setDoc
+  setDoc,
 } from "firebase/firestore";
 import dayjs from "dayjs";
 import { db } from "../firebase";
@@ -23,42 +23,37 @@ const getQuarterMonths = (startMonth) => {
   return months;
 };
 
-const QuarterlySummary = () => {
+export default function QuarterlySummary() {
   const [startMonth, setStartMonth] = useState(dayjs().format("YYYY-MM"));
   const [quarterInvoices, setQuarterInvoices] = useState([]);
   const [totals, setTotals] = useState({
     totalWithVAT: "0.00",
-    totalVAT: "0.00"
+    totalVAT: "0.00",
   });
 
-  // new: quarterly sales totals and overrides
+  // sales‐totals state & overrides
   const [salesTotals, setSalesTotals] = useState({
     totalSales: 0,
-    totalVATCollected: 0
+    totalVATCollected: 0,
   });
   const [overrideValues, setOverrideValues] = useState({
     totalSales: "",
-    totalVATCollected: ""
+    totalVATCollected: "",
   });
   const [editingOverride, setEditingOverride] = useState(false);
 
-  // fetch both invoices and purchase‐VAT totals
   useEffect(() => {
     async function fetchQuarterData() {
       const months = getQuarterMonths(startMonth);
 
-      // invoices & totals
-      let invs = [];
-      for (const m of months) {
-        const q = query(
-          collection(db, "invoices"),
-          where("month", "==", m)
-        );
-        const snap = await getDocs(q);
-        invs.push(...snap.docs.map((d) => ({ id: d.id, ...d.data() })));
-      }
+      // ─── 1) Fetch ALL invoices for these 3 months in one go ───
+      const invSnap = await getDocs(
+        query(collection(db, "invoices"), where("month", "in", months))
+      );
+      const invs = invSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
       setQuarterInvoices(invs);
 
+      // compute purchase totals
       const totalWithVAT = invs.reduce(
         (sum, inv) => sum + (inv.amountWithVAT || 0),
         0
@@ -69,54 +64,82 @@ const QuarterlySummary = () => {
       );
       setTotals({
         totalWithVAT: totalWithVAT.toFixed(2),
-        totalVAT: totalVAT.toFixed(2)
+        totalVAT: totalVAT.toFixed(2),
       });
 
-      // sales & VAT collected totals
-      // date range from first of startMonth to first of month+3
+      // ─── 2) Fetch ALL dailySales over the quarter window ───
       const startDate = `${startMonth}-01`;
-      const endDate = dayjs(startDate).add(3, "month").format("YYYY-MM-DD");
-      const salesQ = query(
-        collection(db, "dailySales"),
-        where("date", ">=", startDate),
-        where("date", "<", endDate)
+      const endDate = dayjs(startDate)
+        .add(3, "month")
+        .format("YYYY-MM-DD");
+      const dailySnap = await getDocs(
+        query(
+          collection(db, "dailySales"),
+          where("date", ">=", startDate),
+          where("date", "<", endDate)
+        )
       );
-      const salesSnap = await getDocs(salesQ);
-      const daily = salesSnap.docs.map((d) => d.data());
-      const computedSales = daily.reduce((sum, d) => sum + (d.amount || 0), 0);
-      const computedVAT = daily.reduce((sum, d) => sum + (d.vatAmount || 0), 0);
+      const dailyRecords = dailySnap.docs.map((d) => d.data());
 
-      // see if there's an override doc
-      const overrideRef = doc(db, "quarterlySales", startMonth);
-      const overrideSnap = await getDoc(overrideRef);
-      if (overrideSnap.exists()) {
-        const d = overrideSnap.data();
+      // ─── 3) Fetch all per‐month overrides in one go ───
+      const monthOverrideSnap = await getDocs(
+        query(collection(db, "monthlySales"), where("month", "in", months))
+      );
+      const monthOverrideMap = {};
+      monthOverrideSnap.docs.forEach((d) => {
+        monthOverrideMap[d.id] = d.data();
+      });
+
+      // build up quarterly sales/VAT using overrides where present
+      let computedSales = 0;
+      let computedVAT = 0;
+      months.forEach((m) => {
+        if (monthOverrideMap[m]) {
+          computedSales += monthOverrideMap[m].totalSales || 0;
+          computedVAT += monthOverrideMap[m].totalVATCollected || 0;
+        } else {
+          // sum dailyRecords for this month
+          dailyRecords
+            .filter((e) => e.date.startsWith(m))
+            .forEach((e) => {
+              computedSales += e.amount || 0;
+              computedVAT += e.vatAmount || 0;
+            });
+        }
+      });
+
+      // ─── 4) Finally check for a quarterly override ───
+      const quarterRef = doc(db, "quarterlySales", startMonth);
+      const quarterSnap = await getDoc(quarterRef);
+      if (quarterSnap.exists() && quarterSnap.data().totalSales > 0) {
+        const d = quarterSnap.data();
         setSalesTotals({
           totalSales: d.totalSales,
-          totalVATCollected: d.totalVATCollected
+          totalVATCollected: d.totalVATCollected,
         });
         setOverrideValues({
           totalSales: d.totalSales.toFixed(2),
-          totalVATCollected: d.totalVATCollected.toFixed(2)
+          totalVATCollected: d.totalVATCollected.toFixed(2),
         });
       } else {
         setSalesTotals({
           totalSales: computedSales,
-          totalVATCollected: computedVAT
+          totalVATCollected: computedVAT,
         });
         setOverrideValues({
           totalSales: computedSales.toFixed(2),
-          totalVATCollected: computedVAT.toFixed(2)
+          totalVATCollected: computedVAT.toFixed(2),
         });
       }
     }
+
     fetchQuarterData();
   }, [startMonth]);
 
   const months = getQuarterMonths(startMonth);
   const monthsDisplay = months.join(", ");
 
-  // export with labels & separators (unchanged)
+  // ─── Export with your same footers ───────────────────────────────
   const exportQuarter = () => {
     const aoa = [];
     aoa.push([
@@ -126,7 +149,7 @@ const QuarterlySummary = () => {
       "Invoice No",
       "VAT No",
       "Amount (with VAT)",
-      "VAT Amount"
+      "VAT Amount",
     ]);
     months.forEach((m) => {
       aoa.push([m, "", "", "", "", "", ""]);
@@ -140,20 +163,21 @@ const QuarterlySummary = () => {
             inv.invoiceNo,
             inv.vatNo,
             inv.amountWithVAT,
-            inv.vatAmount
+            inv.vatAmount,
           ])
         );
-      // blank rows
       aoa.push([], [], [], [], [], []);
     });
 
-    // ─── append your four summary lines ───────────────────────────
-    aoa.push([]);  // one more blank row
+    // summary at bottom
+    aoa.push([]);
     aoa.push(["Total Purchase", totals.totalWithVAT]);
     aoa.push(["Total Sales", salesTotals.totalSales.toFixed(2)]);
     aoa.push(["Total VAT Given", totals.totalVAT]);
-    aoa.push(["Total VAT Collected", salesTotals.totalVATCollected.toFixed(2)]);
-    // ───────────────────────────────────────────────────────────────
+    aoa.push([
+      "Total VAT Collected",
+      salesTotals.totalVATCollected.toFixed(2),
+    ]);
 
     const ws = XLSX.utils.aoa_to_sheet(aoa);
     const wb = XLSX.utils.book_new();
@@ -161,28 +185,7 @@ const QuarterlySummary = () => {
     XLSX.writeFile(wb, `invoices-quarter-${startMonth}.xlsx`);
   };
 
-  // handlers for editing quarterly sales overrides
-  const startEdit = () => setEditingOverride(true);
-  const cancelEdit = () => {
-    setOverrideValues({
-      totalSales: salesTotals.totalSales.toFixed(2),
-      totalVATCollected: salesTotals.totalVATCollected.toFixed(2)
-    });
-    setEditingOverride(false);
-  };
-  const handleChange = (e) =>
-    setOverrideValues({ ...overrideValues, [e.target.name]: e.target.value });
-  const saveEdit = async () => {
-    const ref = doc(db, "quarterlySales", startMonth);
-    const payload = {
-      totalSales: parseFloat(overrideValues.totalSales),
-      totalVATCollected: parseFloat(overrideValues.totalVATCollected)
-    };
-    await setDoc(ref, { ...payload, month: startMonth });
-    setSalesTotals(payload);
-    setEditingOverride(false);
-  };
-
+  // ─── Everything below here is your original JSX UI ─────────────
   return (
     <div className="max-w-4xl mx-auto mt-10 p-6 bg-white rounded shadow">
       <h2 className="text-2xl font-bold mb-4 text-purple-700">
@@ -206,13 +209,14 @@ const QuarterlySummary = () => {
       <p className="mb-2 text-gray-700">
         Showing totals for: <strong>{monthsDisplay}</strong>
       </p>
-      <div className="mb-6 p-4 bg-gray-100 rounded text-left mb-6">
+      <div className="mb-6 p-4 bg-gray-100 rounded text-left">
         <p>
           <strong>Total Purchase (3 months):</strong>{" "}
           {totals.totalWithVAT}
         </p>
         <p>
-          <strong>Total VAT Given (3 months):</strong> {totals.totalVAT}
+          <strong>Total VAT Given (3 months):</strong>{" "}
+          {totals.totalVAT}
         </p>
       </div>
 
@@ -226,7 +230,9 @@ const QuarterlySummary = () => {
                 type="number"
                 name="totalSales"
                 value={overrideValues.totalSales}
-                onChange={handleChange}
+                onChange={(e) =>
+                  setOverrideValues({ ...overrideValues, [e.target.name]: e.target.value })
+                }
                 className="border p-1 w-32"
               />
             </div>
@@ -238,18 +244,35 @@ const QuarterlySummary = () => {
                 type="number"
                 name="totalVATCollected"
                 value={overrideValues.totalVATCollected}
-                onChange={handleChange}
+                onChange={(e) =>
+                  setOverrideValues({ ...overrideValues, [e.target.name]: e.target.value })
+                }
                 className="border p-1 w-32"
               />
             </div>
             <button
-              onClick={saveEdit}
+              onClick={async () => {
+                const ref = doc(db, "quarterlySales", startMonth);
+                const payload = {
+                  totalSales: parseFloat(overrideValues.totalSales),
+                  totalVATCollected: parseFloat(overrideValues.totalVATCollected),
+                };
+                await setDoc(ref, { ...payload, month: startMonth });
+                setSalesTotals(payload);
+                setEditingOverride(false);
+              }}
               className="text-green-700 mr-4"
             >
               Save
             </button>
             <button
-              onClick={cancelEdit}
+              onClick={() => {
+                setOverrideValues({
+                  totalSales: salesTotals.totalSales.toFixed(2),
+                  totalVATCollected: salesTotals.totalVATCollected.toFixed(2),
+                });
+                setEditingOverride(false);
+              }}
               className="text-gray-500"
             >
               Cancel
@@ -270,7 +293,7 @@ const QuarterlySummary = () => {
               </span>
             </p>
             <button
-              onClick={startEdit}
+              onClick={() => setEditingOverride(true)}
               className="text-purple-700 mt-2 underline"
             >
               Edit Sales Totals
@@ -323,7 +346,7 @@ const QuarterlySummary = () => {
         </div>
       )}
 
-      {/* Export single-sheet with separators */}
+      {/* Export */}
       <button
         onClick={exportQuarter}
         className="bg-blue-600 text-white px-6 py-2 rounded hover:bg-blue-700"
@@ -332,6 +355,4 @@ const QuarterlySummary = () => {
       </button>
     </div>
   );
-};
-
-export default QuarterlySummary;
+}
