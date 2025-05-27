@@ -1,9 +1,16 @@
+// src/components/InvoiceForm.jsx
 import React, { useState, useEffect } from "react";
-import { collection, getDocs, addDoc } from "firebase/firestore";
+import {
+  collection,
+  getDocs,
+  query,
+  where,
+  addDoc
+} from "firebase/firestore";
 import { db } from "../firebase";
 import dayjs from "dayjs";
 
-const InvoiceForm = () => {
+export default function InvoiceForm() {
   // Invoice form state
   const [date, setDate] = useState("");
   const [invoiceNo, setInvoiceNo] = useState("");
@@ -17,27 +24,28 @@ const InvoiceForm = () => {
 
   // Load suppliers on mount
   useEffect(() => {
-    const fetchSuppliers = async () => {
+    async function fetchSuppliers() {
       const snap = await getDocs(collection(db, "suppliers"));
-      const list = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      setSuppliers(list);
-    };
+      setSuppliers(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+    }
     fetchSuppliers();
   }, []);
 
-  // Update selectedSupplier object when ID changes
+  // Update selectedSupplier when ID changes
   useEffect(() => {
     setSelectedSupplier(
       suppliers.find(s => s.id === selectedSupplierId) || null
     );
   }, [selectedSupplierId, suppliers]);
 
-  const handleSubmit = async (e) => {
+  const handleSubmit = async e => {
     e.preventDefault();
+
+    // validate
     if (
       !selectedSupplier ||
       !date ||
-      !invoiceNo ||
+      !invoiceNo.trim() ||
       !amountWithVAT ||
       !vatAmount
     ) {
@@ -47,19 +55,33 @@ const InvoiceForm = () => {
 
     const invoice = {
       date,
-      supplierId: selectedSupplier.id,
-      supplierName: selectedSupplier.name,
-      vatNo: selectedSupplier.vatNo,
-      invoiceNo,
+      supplierId:    selectedSupplier.id,
+      supplierName:  selectedSupplier.name,
+      vatNo:         selectedSupplier.vatNo,
+      invoiceNo:     invoiceNo.trim(),
       amountWithVAT: parseFloat(amountWithVAT),
-      vatAmount: parseFloat(vatAmount),
-      month: dayjs(date).format("YYYY-MM"),
+      vatAmount:     parseFloat(vatAmount),
+      month:         dayjs(date).format("YYYY-MM"),
     };
 
+    // ─── Duplicate check ─────────────────────────────────────────────
+    const dupQ = query(
+      collection(db, "invoices"),
+      where("invoiceNo",      "==", invoice.invoiceNo),
+      where("amountWithVAT",  "==", invoice.amountWithVAT),
+      where("vatAmount",      "==", invoice.vatAmount)
+    );
+    const dupSnap = await getDocs(dupQ);
+    if (!dupSnap.empty) {
+      alert("❗ Invoice already exists (same number, amount & VAT).");
+      return;
+    }
+
+    // ─── Save if not duplicate ───────────────────────────────────────
     try {
       await addDoc(collection(db, "invoices"), invoice);
-      alert("Invoice added successfully!");
-      // reset
+      alert("✅ Invoice added successfully!");
+      // reset form
       setDate("");
       setInvoiceNo("");
       setAmountWithVAT("");
@@ -80,10 +102,10 @@ const InvoiceForm = () => {
         <select
           className="border p-2 w-full"
           value={selectedSupplierId}
-          onChange={(e) => setSelectedSupplierId(e.target.value)}
+          onChange={e => setSelectedSupplierId(e.target.value)}
         >
           <option value="">-- Select Supplier --</option>
-          {suppliers.map((s) => (
+          {suppliers.map(s => (
             <option key={s.id} value={s.id}>
               {s.name}
             </option>
@@ -91,40 +113,41 @@ const InvoiceForm = () => {
         </select>
       </div>
 
+      {/* VAT No display */}
       {selectedSupplier && (
         <div className="mb-4 text-gray-700">
           <strong>VAT No:</strong> {selectedSupplier.vatNo}
         </div>
       )}
 
-      {/* Invoice fields */}
+      {/* Invoice form */}
       <form onSubmit={handleSubmit} className="flex flex-col gap-4">
         <input
           type="date"
           className="border p-2"
           value={date}
-          onChange={(e) => setDate(e.target.value)}
+          onChange={e => setDate(e.target.value)}
         />
         <input
           type="text"
           placeholder="Invoice Number"
           className="border p-2"
           value={invoiceNo}
-          onChange={(e) => setInvoiceNo(e.target.value)}
+          onChange={e => setInvoiceNo(e.target.value)}
         />
         <input
           type="number"
           placeholder="Amount (with VAT)"
           className="border p-2"
           value={amountWithVAT}
-          onChange={(e) => setAmountWithVAT(e.target.value)}
+          onChange={e => setAmountWithVAT(e.target.value)}
         />
         <input
           type="number"
           placeholder="VAT Amount"
           className="border p-2"
           value={vatAmount}
-          onChange={(e) => setVatAmount(e.target.value)}
+          onChange={e => setVatAmount(e.target.value)}
         />
 
         <button
@@ -136,6 +159,4 @@ const InvoiceForm = () => {
       </form>
     </div>
   );
-};
-
-export default InvoiceForm;
+}

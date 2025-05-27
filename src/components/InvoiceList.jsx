@@ -6,11 +6,9 @@ import {
   query,
   where,
   doc,
-  getDoc,
-  setDoc,
   updateDoc,
   deleteDoc,
-  writeBatch,
+  writeBatch
 } from "firebase/firestore";
 import dayjs from "dayjs";
 import { db } from "../firebase";
@@ -29,18 +27,20 @@ function getQuarterMonths(startMonth) {
 const InvoiceList = () => {
   // ─── State ──────────────────────────────────────────────────────────
   const [invoices, setInvoices] = useState([]);
-  const [selectedMonth, setSelectedMonth] = useState(dayjs().format("YYYY-MM"));
+  const [selectedMonth, setSelectedMonth] = useState(
+    dayjs().format("YYYY-MM")
+  );
   const [editingId, setEditingId] = useState(null);
   const [editValues, setEditValues] = useState({});
 
   // sales totals state
   const [salesTotals, setSalesTotals] = useState({
     totalSales: 0,
-    totalVATCollected: 0,
+    totalVATCollected: 0
   });
   const [overrideValues, setOverrideValues] = useState({
     totalSales: "",
-    totalVATCollected: "",
+    totalVATCollected: ""
   });
   const [editingSalesTotals, setEditingSalesTotals] = useState(false);
 
@@ -61,12 +61,15 @@ const InvoiceList = () => {
       where("month", "==", selectedMonth)
     );
     const snap = await getDocs(q);
-    setInvoices(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+    // sort ascending by date
+    const list = snap.docs
+      .map((d) => ({ id: d.id, ...d.data() }))
+      .sort((a, b) => new Date(a.date) - new Date(b.date));
+    setInvoices(list);
   };
 
   // ─── Fetch Daily Sales & Monthly Override ────────────────────────────
   const fetchSalesTotals = async () => {
-    // 1) compute from dailySales
     const allSnap = await getDocs(collection(db, "dailySales"));
     const all = allSnap.docs.map((d) => d.data());
     const monthEntries = all.filter((e) =>
@@ -81,12 +84,16 @@ const InvoiceList = () => {
       0
     );
 
-    // 2) try override doc
     const overrideRef = doc(db, "monthlySales", selectedMonth);
-    const overrideSnap = await getDoc(overrideRef);
-    if (overrideSnap.exists()) {
-      const data = overrideSnap.data();
-      // guard against missing fields
+    const overrideSnap = await getDocs(
+      query(
+        collection(db, "monthlySales"),
+        where("__name__", "==", selectedMonth)
+      )
+    );
+    // note: Firestore doesn't allow where on docID in getDoc, so we use query
+    if (!overrideSnap.empty) {
+      const data = overrideSnap.docs[0].data();
       const ts =
         typeof data.totalSales === "number"
           ? data.totalSales
@@ -95,21 +102,19 @@ const InvoiceList = () => {
         typeof data.totalVATCollected === "number"
           ? data.totalVATCollected
           : computedVAT;
-
       setSalesTotals({ totalSales: ts, totalVATCollected: tv });
       setOverrideValues({
         totalSales: ts.toFixed(2),
-        totalVATCollected: tv.toFixed(2),
+        totalVATCollected: tv.toFixed(2)
       });
     } else {
-      // no override doc
       setSalesTotals({
         totalSales: computedSales,
-        totalVATCollected: computedVAT,
+        totalVATCollected: computedVAT
       });
       setOverrideValues({
         totalSales: computedSales.toFixed(2),
-        totalVATCollected: computedVAT.toFixed(2),
+        totalVATCollected: computedVAT.toFixed(2)
       });
     }
   };
@@ -120,7 +125,7 @@ const InvoiceList = () => {
     fetchSalesTotals();
   }, [selectedMonth]);
 
-  // ─── Single‐Invoice Handlers ────────────────────────────────────────
+  // ─── Single-Invoice Handlers ────────────────────────────────────────
   const startEdit = (inv) => {
     setEditingId(inv.id);
     setEditValues({ ...inv });
@@ -138,12 +143,33 @@ const InvoiceList = () => {
       invoiceNo: editValues.invoiceNo,
       amountWithVAT: parseFloat(editValues.amountWithVAT),
       vatAmount: parseFloat(editValues.vatAmount),
-      month: dayjs(editValues.date).format("YYYY-MM"),
+      month: dayjs(editValues.date).format("YYYY-MM")
     };
+
+    // ─── duplicate-check before updating ───────────────────────────────
+    const dupQ = query(
+      collection(db, "invoices"),
+      where("invoiceNo", "==", updated.invoiceNo),
+      where("amountWithVAT", "==", updated.amountWithVAT),
+      where("vatAmount", "==", updated.vatAmount)
+    );
+    const dupSnap = await getDocs(dupQ);
+    // if any other doc (id ≠ editingId) matches, block
+    const isDup = dupSnap.docs.some((d) => d.id !== editingId);
+    if (isDup) {
+      alert(
+        "❗ Invoice already exists with the same number, amount & VAT. Edit cancelled."
+      );
+      return;
+    }
+
+    // ─── perform update ────────────────────────────────────────────────
     await updateDoc(ref, updated);
+    alert("✅ Changes saved successfully!");
     cancelEdit();
     fetchInvoices();
   };
+
   const deleteInvoice = async (id) => {
     if (!window.confirm("Are you sure you want to delete this invoice?"))
       return;
@@ -180,7 +206,7 @@ const InvoiceList = () => {
     const ref = doc(db, "monthlySales", selectedMonth);
     const updated = {
       totalSales: parseFloat(overrideValues.totalSales),
-      totalVATCollected: parseFloat(overrideValues.totalVATCollected),
+      totalVATCollected: parseFloat(overrideValues.totalVATCollected)
     };
     await setDoc(ref, { ...updated, month: selectedMonth });
     setSalesTotals(updated);
@@ -189,7 +215,7 @@ const InvoiceList = () => {
   const cancelSalesEdit = () => {
     setOverrideValues({
       totalSales: salesTotals.totalSales.toFixed(2),
-      totalVATCollected: salesTotals.totalVATCollected.toFixed(2),
+      totalVATCollected: salesTotals.totalVATCollected.toFixed(2)
     });
     setEditingSalesTotals(false);
   };
@@ -298,7 +324,7 @@ const InvoiceList = () => {
                     "VAT No",
                     "Amount (with VAT)",
                     "VAT Amount",
-                    "Actions",
+                    "Actions"
                   ].map((h) => (
                     <th key={h} className="p-2 border">
                       {h}
@@ -317,7 +343,7 @@ const InvoiceList = () => {
                           "invoiceNo",
                           "vatNo",
                           "amountWithVAT",
-                          "vatAmount",
+                          "vatAmount"
                         ].map((field) => (
                           <td key={field} className="border p-2">
                             <input
@@ -336,7 +362,10 @@ const InvoiceList = () => {
                           >
                             Save
                           </button>
-                          <button onClick={cancelEdit} className="text-gray-500">
+                          <button
+                            onClick={cancelEdit}
+                            className="text-gray-500"
+                          >
                             Cancel
                           </button>
                         </td>
@@ -382,12 +411,6 @@ const InvoiceList = () => {
               filename={`invoices-${selectedMonth}.xlsx`}
               buttonText="Export Month"
               buttonClassName="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded"
-              summary={{
-              totalAmount: totalAmount.toFixed(2),
-              totalVAT: totalVAT.toFixed(2),
-              totalSales: salesTotals.totalSales.toFixed(2),
-              totalVATCollected: salesTotals.totalVATCollected.toFixed(2),
-              }}
             />
 
             <button

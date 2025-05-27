@@ -51,6 +51,8 @@ export default function QuarterlySummary() {
         query(collection(db, "invoices"), where("month", "in", months))
       );
       const invs = invSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      // ─── sort by date ascending ───────────────────────────────
+      invs.sort((a, b) => new Date(a.date) - new Date(b.date));
       setQuarterInvoices(invs);
 
       // compute purchase totals
@@ -185,7 +187,6 @@ export default function QuarterlySummary() {
     XLSX.writeFile(wb, `invoices-quarter-${startMonth}.xlsx`);
   };
 
-  // ─── Everything below here is your original JSX UI ─────────────
   return (
     <div className="max-w-4xl mx-auto mt-10 p-6 bg-white rounded shadow">
       <h2 className="text-2xl font-bold mb-4 text-purple-700">
@@ -231,7 +232,10 @@ export default function QuarterlySummary() {
                 name="totalSales"
                 value={overrideValues.totalSales}
                 onChange={(e) =>
-                  setOverrideValues({ ...overrideValues, [e.target.name]: e.target.value })
+                  setOverrideValues({
+                    ...overrideValues,
+                    [e.target.name]: e.target.value,
+                  })
                 }
                 className="border p-1 w-32"
               />
@@ -245,7 +249,10 @@ export default function QuarterlySummary() {
                 name="totalVATCollected"
                 value={overrideValues.totalVATCollected}
                 onChange={(e) =>
-                  setOverrideValues({ ...overrideValues, [e.target.name]: e.target.value })
+                  setOverrideValues({
+                    ...overrideValues,
+                    [e.target.name]: e.target.value,
+                  })
                 }
                 className="border p-1 w-32"
               />
@@ -255,7 +262,9 @@ export default function QuarterlySummary() {
                 const ref = doc(db, "quarterlySales", startMonth);
                 const payload = {
                   totalSales: parseFloat(overrideValues.totalSales),
-                  totalVATCollected: parseFloat(overrideValues.totalVATCollected),
+                  totalVATCollected: parseFloat(
+                    overrideValues.totalVATCollected
+                  ),
                 };
                 await setDoc(ref, { ...payload, month: startMonth });
                 setSalesTotals(payload);
