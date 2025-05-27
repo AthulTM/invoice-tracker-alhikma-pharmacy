@@ -8,7 +8,8 @@ import {
   doc,
   updateDoc,
   deleteDoc,
-  writeBatch
+  writeBatch,
+  setDoc,
 } from "firebase/firestore";
 import dayjs from "dayjs";
 import { db } from "../firebase";
@@ -27,20 +28,21 @@ function getQuarterMonths(startMonth) {
 const InvoiceList = () => {
   // ─── State ──────────────────────────────────────────────────────────
   const [invoices, setInvoices] = useState([]);
-  const [selectedMonth, setSelectedMonth] = useState(
-    dayjs().format("YYYY-MM")
-  );
+  const [selectedMonth, setSelectedMonth] = useState(dayjs().format("YYYY-MM"));
   const [editingId, setEditingId] = useState(null);
   const [editValues, setEditValues] = useState({});
+
+  // suppliers for dropdown in edit
+  const [suppliers, setSuppliers] = useState([]);
 
   // sales totals state
   const [salesTotals, setSalesTotals] = useState({
     totalSales: 0,
-    totalVATCollected: 0
+    totalVATCollected: 0,
   });
   const [overrideValues, setOverrideValues] = useState({
     totalSales: "",
-    totalVATCollected: ""
+    totalVATCollected: "",
   });
   const [editingSalesTotals, setEditingSalesTotals] = useState(false);
 
@@ -54,6 +56,15 @@ const InvoiceList = () => {
     0
   );
 
+  // ─── Fetch suppliers once ────────────────────────────────────────────
+  useEffect(() => {
+    async function fetchSuppliers() {
+      const snap = await getDocs(collection(db, "suppliers"));
+      setSuppliers(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+    }
+    fetchSuppliers();
+  }, []);
+
   // ─── Fetch Monthly Invoices ─────────────────────────────────────────
   const fetchInvoices = async () => {
     const q = query(
@@ -61,9 +72,9 @@ const InvoiceList = () => {
       where("month", "==", selectedMonth)
     );
     const snap = await getDocs(q);
-    // sort ascending by date
     const list = snap.docs
       .map((d) => ({ id: d.id, ...d.data() }))
+      // sort ascending by date
       .sort((a, b) => new Date(a.date) - new Date(b.date));
     setInvoices(list);
   };
@@ -84,14 +95,13 @@ const InvoiceList = () => {
       0
     );
 
-    const overrideRef = doc(db, "monthlySales", selectedMonth);
+    // override logic
     const overrideSnap = await getDocs(
       query(
         collection(db, "monthlySales"),
         where("__name__", "==", selectedMonth)
       )
     );
-    // note: Firestore doesn't allow where on docID in getDoc, so we use query
     if (!overrideSnap.empty) {
       const data = overrideSnap.docs[0].data();
       const ts =
@@ -105,16 +115,16 @@ const InvoiceList = () => {
       setSalesTotals({ totalSales: ts, totalVATCollected: tv });
       setOverrideValues({
         totalSales: ts.toFixed(2),
-        totalVATCollected: tv.toFixed(2)
+        totalVATCollected: tv.toFixed(2),
       });
     } else {
       setSalesTotals({
         totalSales: computedSales,
-        totalVATCollected: computedVAT
+        totalVATCollected: computedVAT,
       });
       setOverrideValues({
         totalSales: computedSales.toFixed(2),
-        totalVATCollected: computedVAT.toFixed(2)
+        totalVATCollected: computedVAT.toFixed(2),
       });
     }
   };
@@ -125,7 +135,7 @@ const InvoiceList = () => {
     fetchSalesTotals();
   }, [selectedMonth]);
 
-  // ─── Single-Invoice Handlers ────────────────────────────────────────
+  // ─── Edit / Delete Handlers ────────────────────────────────────────
   const startEdit = (inv) => {
     setEditingId(inv.id);
     setEditValues({ ...inv });
@@ -133,6 +143,16 @@ const InvoiceList = () => {
   const cancelEdit = () => {
     setEditingId(null);
     setEditValues({});
+  };
+  // auto‐update vatNo on supplier change
+  const handleSupplierChange = (e) => {
+    const name = e.target.value;
+    const sup = suppliers.find((s) => s.name === name);
+    setEditValues({
+      ...editValues,
+      supplierName: name,
+      vatNo: sup ? sup.vatNo : "",
+    });
   };
   const saveEdit = async () => {
     const ref = doc(db, "invoices", editingId);
@@ -143,33 +163,28 @@ const InvoiceList = () => {
       invoiceNo: editValues.invoiceNo,
       amountWithVAT: parseFloat(editValues.amountWithVAT),
       vatAmount: parseFloat(editValues.vatAmount),
-      month: dayjs(editValues.date).format("YYYY-MM")
+      month: dayjs(editValues.date).format("YYYY-MM"),
     };
-
-    // ─── duplicate-check before updating ───────────────────────────────
-    const dupQ = query(
-      collection(db, "invoices"),
-      where("invoiceNo", "==", updated.invoiceNo),
-      where("amountWithVAT", "==", updated.amountWithVAT),
-      where("vatAmount", "==", updated.vatAmount)
+    // duplicate-check
+    const dupSnap = await getDocs(
+      query(
+        collection(db, "invoices"),
+        where("invoiceNo", "==", updated.invoiceNo),
+        where("amountWithVAT", "==", updated.amountWithVAT),
+        where("vatAmount", "==", updated.vatAmount)
+      )
     );
-    const dupSnap = await getDocs(dupQ);
-    // if any other doc (id ≠ editingId) matches, block
-    const isDup = dupSnap.docs.some((d) => d.id !== editingId);
-    if (isDup) {
+    if (dupSnap.docs.some((d) => d.id !== editingId)) {
       alert(
         "❗ Invoice already exists with the same number, amount & VAT. Edit cancelled."
       );
       return;
     }
-
-    // ─── perform update ────────────────────────────────────────────────
     await updateDoc(ref, updated);
     alert("✅ Changes saved successfully!");
     cancelEdit();
     fetchInvoices();
   };
-
   const deleteInvoice = async (id) => {
     if (!window.confirm("Are you sure you want to delete this invoice?"))
       return;
@@ -187,12 +202,9 @@ const InvoiceList = () => {
       )
     )
       return;
-
-    const q = query(
-      collection(db, "invoices"),
-      where("month", "==", selectedMonth)
+    const snap = await getDocs(
+      query(collection(db, "invoices"), where("month", "==", selectedMonth))
     );
-    const snap = await getDocs(q);
     const batch = writeBatch(db);
     snap.docs.forEach((d) => batch.delete(doc(db, "invoices", d.id)));
     await batch.commit();
@@ -206,7 +218,7 @@ const InvoiceList = () => {
     const ref = doc(db, "monthlySales", selectedMonth);
     const updated = {
       totalSales: parseFloat(overrideValues.totalSales),
-      totalVATCollected: parseFloat(overrideValues.totalVATCollected)
+      totalVATCollected: parseFloat(overrideValues.totalVATCollected),
     };
     await setDoc(ref, { ...updated, month: selectedMonth });
     setSalesTotals(updated);
@@ -215,7 +227,7 @@ const InvoiceList = () => {
   const cancelSalesEdit = () => {
     setOverrideValues({
       totalSales: salesTotals.totalSales.toFixed(2),
-      totalVATCollected: salesTotals.totalVATCollected.toFixed(2)
+      totalVATCollected: salesTotals.totalVATCollected.toFixed(2),
     });
     setEditingSalesTotals(false);
   };
@@ -247,7 +259,6 @@ const InvoiceList = () => {
           Total VAT Given:{" "}
           <span className="text-blue-700">{totalVAT.toFixed(2)}</span>
         </p>
-
         <div className="mt-4 border-t pt-4">
           {editingSalesTotals ? (
             <>
@@ -324,7 +335,7 @@ const InvoiceList = () => {
                     "VAT No",
                     "Amount (with VAT)",
                     "VAT Amount",
-                    "Actions"
+                    "Actions",
                   ].map((h) => (
                     <th key={h} className="p-2 border">
                       {h}
@@ -337,24 +348,73 @@ const InvoiceList = () => {
                   <tr key={inv.id} className="text-center">
                     {editingId === inv.id ? (
                       <>
-                        {[
-                          "date",
-                          "supplierName",
-                          "invoiceNo",
-                          "vatNo",
-                          "amountWithVAT",
-                          "vatAmount"
-                        ].map((field) => (
-                          <td key={field} className="border p-2">
-                            <input
-                              {...(field === "date" ? { type: "date" } : {})}
-                              name={field}
-                              value={editValues[field]}
-                              onChange={handleChange}
-                              className="border p-1 w-full"
-                            />
-                          </td>
-                        ))}
+                        {/* Date */}
+                        <td className="border p-2">
+                          <input
+                            type="date"
+                            name="date"
+                            value={editValues.date}
+                            onChange={handleChange}
+                            className="border p-1 w-full"
+                          />
+                        </td>
+                        {/* Supplier dropdown */}
+                        <td className="border p-2">
+                          <select
+                            name="supplierName"
+                            value={editValues.supplierName}
+                            onChange={handleSupplierChange}
+                            className="border p-1 w-full"
+                          >
+                            <option value="">-- Select Supplier --</option>
+                            {suppliers.map((s) => (
+                              <option key={s.id} value={s.name}>
+                                {s.name}
+                              </option>
+                            ))}
+                          </select>
+                        </td>
+                        {/* Invoice No */}
+                        <td className="border p-2">
+                          <input
+                            type="text"
+                            name="invoiceNo"
+                            value={editValues.invoiceNo}
+                            onChange={handleChange}
+                            className="border p-1 w-full"
+                          />
+                        </td>
+                        {/* VAT No (read-only) */}
+                        <td className="border p-2">
+                          <input
+                            type="text"
+                            name="vatNo"
+                            value={editValues.vatNo}
+                            readOnly
+                            className="border p-1 w-full bg-gray-100"
+                          />
+                        </td>
+                        {/* Amount w/ VAT */}
+                        <td className="border p-2">
+                          <input
+                            type="number"
+                            name="amountWithVAT"
+                            value={editValues.amountWithVAT}
+                            onChange={handleChange}
+                            className="border p-1 w-full"
+                          />
+                        </td>
+                        {/* VAT Amount */}
+                        <td className="border p-2">
+                          <input
+                            type="number"
+                            name="vatAmount"
+                            value={editValues.vatAmount}
+                            onChange={handleChange}
+                            className="border p-1 w-full"
+                          />
+                        </td>
+                        {/* Actions */}
                         <td className="border p-2">
                           <button
                             onClick={saveEdit}
@@ -412,7 +472,6 @@ const InvoiceList = () => {
               buttonText="Export Month"
               buttonClassName="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded"
             />
-
             <button
               onClick={deleteMonth}
               className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded"
