@@ -165,7 +165,7 @@ const InvoiceList = () => {
       vatAmount: parseFloat(editValues.vatAmount),
       month: dayjs(editValues.date).format("YYYY-MM"),
     };
-    // duplicate-check
+    // duplicate‐check
     const dupSnap = await getDocs(
       query(
         collection(db, "invoices"),
@@ -358,13 +358,13 @@ const InvoiceList = () => {
                             className="border p-1 w-full"
                           />
                         </td>
-                        {/* Supplier dropdown */}
-                        <td className="border p-2">
+                        {/* Supplier dropdown: now pops above on mobile */}
+                        <td className="border p-2 relative z-10">
                           <select
                             name="supplierName"
                             value={editValues.supplierName}
                             onChange={handleSupplierChange}
-                            className="border p-1 w-full"
+                            className="border p-1 w-full bg-white relative z-20"
                           >
                             <option value="">-- Select Supplier --</option>
                             {suppliers.map((s) => (
