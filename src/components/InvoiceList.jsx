@@ -324,7 +324,7 @@ const InvoiceList = () => {
         <p className="text-gray-600">No invoices found for this month.</p>
       ) : (
         <>
-          <div className="overflow-x-auto">
+          <div className="overflow-x-auto overflow-y-visible">
             <table className="w-full text-sm border">
               <thead>
                 <tr className="bg-gray-100 text-center">
