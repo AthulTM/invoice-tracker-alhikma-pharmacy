@@ -45,6 +45,7 @@ const InvoiceList = () => {
     totalVATCollected: "",
   });
   const [editingSalesTotals, setEditingSalesTotals] = useState(false);
+  const [hasOverride, setHasOverride] = useState(false);
 
   // ─── Purchase Totals ─────────────────────────────────────────────────
   const totalAmount = invoices.reduce(
@@ -60,7 +61,7 @@ const InvoiceList = () => {
   useEffect(() => {
     async function fetchSuppliers() {
       const snap = await getDocs(collection(db, "suppliers"));
-      setSuppliers(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+      setSuppliers(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
     }
     fetchSuppliers();
   }, []);
@@ -117,6 +118,7 @@ const InvoiceList = () => {
         totalSales: ts.toFixed(2),
         totalVATCollected: tv.toFixed(2),
       });
+      setHasOverride(true);
     } else {
       setSalesTotals({
         totalSales: computedSales,
@@ -126,6 +128,7 @@ const InvoiceList = () => {
         totalSales: computedSales.toFixed(2),
         totalVATCollected: computedVAT.toFixed(2),
       });
+      setHasOverride(false);
     }
   };
 
@@ -135,7 +138,7 @@ const InvoiceList = () => {
     fetchSalesTotals();
   }, [selectedMonth]);
 
-  // ─── Edit / Delete Handlers ────────────────────────────────────────
+  // ─── Single‐Invoice Handlers ────────────────────────────────────────
   const startEdit = (inv) => {
     setEditingId(inv.id);
     setEditValues({ ...inv });
@@ -223,6 +226,13 @@ const InvoiceList = () => {
     await setDoc(ref, { ...updated, month: selectedMonth });
     setSalesTotals(updated);
     setEditingSalesTotals(false);
+    setHasOverride(true);
+    alert("✅ Monthly override saved!");
+  };
+  const clearOverride = async () => {
+    await deleteDoc(doc(db, "monthlySales", selectedMonth));
+    fetchSalesTotals();
+    alert("✅ Monthly override cleared!");
   };
   const cancelSalesEdit = () => {
     setOverrideValues({
@@ -308,12 +318,22 @@ const InvoiceList = () => {
                   {salesTotals.totalVATCollected.toFixed(2)}
                 </span>
               </p>
-              <button
-                onClick={() => setEditingSalesTotals(true)}
-                className="text-blue-700 mt-2"
-              >
-                Edit Sales
-              </button>
+              <div className="flex items-center space-x-4 mt-2">
+                <button
+                  onClick={() => setEditingSalesTotals(true)}
+                  className="text-blue-700 underline"
+                >
+                  Edit Sales
+                </button>
+                {hasOverride && (
+                  <button
+                    onClick={clearOverride}
+                    className="text-red-600 underline"
+                  >
+                    Clear Override
+                  </button>
+                )}
+              </div>
             </>
           )}
         </div>
