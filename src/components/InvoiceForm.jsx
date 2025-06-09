@@ -10,79 +10,90 @@ import {
 import { db } from "../firebase";
 import dayjs from "dayjs";
 
+// you'll need to install react-datepicker:
+//    npm install react-datepicker
+import DatePicker from "react-datepicker";
+import "react-datepicker/dist/react-datepicker.css";
+
 export default function InvoiceForm() {
-  // Invoice form state
-  const [date, setDate] = useState("");
+  // ─── Form state ───────────────────────────────────────────────────
+  const [date, setDate] = useState(new Date());
   const [invoiceNo, setInvoiceNo] = useState("");
   const [amountWithVAT, setAmountWithVAT] = useState("");
   const [vatAmount, setVatAmount] = useState("");
 
-  // Suppliers state
+  // ─── Suppliers dropdown ───────────────────────────────────────────
   const [suppliers, setSuppliers] = useState([]);
   const [selectedSupplierId, setSelectedSupplierId] = useState("");
   const [selectedSupplier, setSelectedSupplier] = useState(null);
 
-  // Load suppliers on mount
   useEffect(() => {
+    // load supplier list once
     async function fetchSuppliers() {
       const snap = await getDocs(collection(db, "suppliers"));
-      setSuppliers(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+      setSuppliers(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
     }
     fetchSuppliers();
   }, []);
 
-  // Update selectedSupplier when ID changes
   useEffect(() => {
+    // update the selected supplier object
     setSelectedSupplier(
-      suppliers.find(s => s.id === selectedSupplierId) || null
+      suppliers.find((s) => s.id === selectedSupplierId) || null
     );
   }, [selectedSupplierId, suppliers]);
 
-  const handleSubmit = async e => {
+  // ─── Handle form submit ────────────────────────────────────────────
+  const handleSubmit = async (e) => {
     e.preventDefault();
 
-    // validate
+    // required: supplier, date, invoiceNo, amountWithVAT
     if (
       !selectedSupplier ||
       !date ||
       !invoiceNo.trim() ||
-      !amountWithVAT ||
-      !vatAmount
+      !amountWithVAT
     ) {
-      alert("Please fill all fields.");
+      alert("Please fill all required fields.");
       return;
     }
 
+    // if vatAmount is blank, treat as zero
+    const vatVal =
+      vatAmount.trim() === "" ? 0 : parseFloat(vatAmount);
+
     const invoice = {
-      date,
-      supplierId:    selectedSupplier.id,
-      supplierName:  selectedSupplier.name,
-      vatNo:         selectedSupplier.vatNo,
-      invoiceNo:     invoiceNo.trim(),
+      date: dayjs(date).format("YYYY-MM-DD"),
+      supplierId: selectedSupplier.id,
+      supplierName: selectedSupplier.name,
+      vatNo: selectedSupplier.vatNo,
+      invoiceNo: invoiceNo.trim(),
       amountWithVAT: parseFloat(amountWithVAT),
-      vatAmount:     parseFloat(vatAmount),
-      month:         dayjs(date).format("YYYY-MM"),
+      vatAmount: vatVal,
+      month: dayjs(date).format("YYYY-MM"),
     };
 
-    // ─── Duplicate check ─────────────────────────────────────────────
+    // ─── Duplicate‐check ──────────────────────────────────────────────
     const dupQ = query(
       collection(db, "invoices"),
-      where("invoiceNo",      "==", invoice.invoiceNo),
-      where("amountWithVAT",  "==", invoice.amountWithVAT),
-      where("vatAmount",      "==", invoice.vatAmount)
+      where("invoiceNo", "==", invoice.invoiceNo),
+      where("amountWithVAT", "==", invoice.amountWithVAT),
+      where("vatAmount", "==", invoice.vatAmount)
     );
     const dupSnap = await getDocs(dupQ);
     if (!dupSnap.empty) {
-      alert("❗ Invoice already exists (same number, amount & VAT).");
+      alert(
+        "❗ Invoice already exists (same number, amount & VAT)."
+      );
       return;
     }
 
-    // ─── Save if not duplicate ───────────────────────────────────────
+    // ─── Save to Firestore ───────────────────────────────────────────
     try {
       await addDoc(collection(db, "invoices"), invoice);
       alert("✅ Invoice added successfully!");
       // reset form
-      setDate("");
+      setDate(new Date());
       setInvoiceNo("");
       setAmountWithVAT("");
       setVatAmount("");
@@ -98,14 +109,18 @@ export default function InvoiceForm() {
 
       {/* Supplier dropdown */}
       <div className="mb-4">
-        <label className="block font-semibold mb-1">Select Supplier</label>
+        <label className="block font-semibold mb-1">
+          Select Supplier
+        </label>
         <select
           className="border p-2 w-full"
           value={selectedSupplierId}
-          onChange={e => setSelectedSupplierId(e.target.value)}
+          onChange={(e) =>
+            setSelectedSupplierId(e.target.value)
+          }
         >
           <option value="">-- Select Supplier --</option>
-          {suppliers.map(s => (
+          {suppliers.map((s) => (
             <option key={s.id} value={s.id}>
               {s.name}
             </option>
@@ -122,32 +137,39 @@ export default function InvoiceForm() {
 
       {/* Invoice form */}
       <form onSubmit={handleSubmit} className="flex flex-col gap-4">
-        <input
-          type="date"
-          className="border p-2"
-          value={date}
-          onChange={e => setDate(e.target.value)}
+        {/* Custom date picker (no "Set/Cancel" on mobile) */}
+        <DatePicker
+          selected={date}
+          onChange={(d) => setDate(d)}
+          dateFormat="yyyy-MM-dd"
+          className="border p-2 w-full"
         />
+
         <input
           type="text"
           placeholder="Invoice Number"
           className="border p-2"
           value={invoiceNo}
-          onChange={e => setInvoiceNo(e.target.value)}
+          onChange={(e) => setInvoiceNo(e.target.value)}
         />
+
         <input
           type="number"
           placeholder="Amount (with VAT)"
           className="border p-2"
           value={amountWithVAT}
-          onChange={e => setAmountWithVAT(e.target.value)}
+          onChange={(e) =>
+            setAmountWithVAT(e.target.value)
+          }
         />
+
+        {/* VAT Amount now optional */}
         <input
           type="number"
-          placeholder="VAT Amount"
+          placeholder="VAT Amount (optional)"
           className="border p-2"
           value={vatAmount}
-          onChange={e => setVatAmount(e.target.value)}
+          onChange={(e) => setVatAmount(e.target.value)}
         />
 
         <button
