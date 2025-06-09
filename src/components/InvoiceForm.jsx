@@ -21,6 +21,7 @@ export default function InvoiceForm() {
   const [invoiceNo, setInvoiceNo] = useState("");
   const [amountWithVAT, setAmountWithVAT] = useState("");
   const [vatAmount, setVatAmount] = useState("");
+  const [submitting, setSubmitting] = useState(false);
 
   // ─── Suppliers dropdown ───────────────────────────────────────────
   const [suppliers, setSuppliers] = useState([]);
@@ -46,6 +47,7 @@ export default function InvoiceForm() {
   // ─── Handle form submit ────────────────────────────────────────────
   const handleSubmit = async (e) => {
     e.preventDefault();
+    if (submitting) return;          // guard against double-submit
 
     // required: supplier, date, invoiceNo, amountWithVAT
     if (
@@ -58,9 +60,10 @@ export default function InvoiceForm() {
       return;
     }
 
+    setSubmitting(true);
+
     // if vatAmount is blank, treat as zero
-    const vatVal =
-      vatAmount.trim() === "" ? 0 : parseFloat(vatAmount);
+    const vatVal = vatAmount.trim() === "" ? 0 : parseFloat(vatAmount);
 
     const invoice = {
       date: dayjs(date).format("YYYY-MM-DD"),
@@ -73,33 +76,35 @@ export default function InvoiceForm() {
       month: dayjs(date).format("YYYY-MM"),
     };
 
-    // ─── Duplicate‐check ──────────────────────────────────────────────
-    const dupQ = query(
-      collection(db, "invoices"),
-      where("invoiceNo", "==", invoice.invoiceNo),
-      where("amountWithVAT", "==", invoice.amountWithVAT),
-      where("vatAmount", "==", invoice.vatAmount)
-    );
-    const dupSnap = await getDocs(dupQ);
-    if (!dupSnap.empty) {
-      alert(
-        "❗ Invoice already exists (same number, amount & VAT)."
-      );
-      return;
-    }
-
-    // ─── Save to Firestore ───────────────────────────────────────────
     try {
+      // ─── Duplicate‐check ───────────────────────────────────────────
+      const dupQ = query(
+        collection(db, "invoices"),
+        where("invoiceNo", "==", invoice.invoiceNo),
+        where("amountWithVAT", "==", invoice.amountWithVAT),
+        where("vatAmount", "==", invoice.vatAmount)
+      );
+      const dupSnap = await getDocs(dupQ);
+      if (!dupSnap.empty) {
+        alert("❗ Invoice already exists (same number, amount & VAT).");
+        return;
+      }
+
+      // ─── Save to Firestore ────────────────────────────────────────
       await addDoc(collection(db, "invoices"), invoice);
       alert("✅ Invoice added successfully!");
+
       // reset form
       setDate(new Date());
       setInvoiceNo("");
       setAmountWithVAT("");
       setVatAmount("");
       setSelectedSupplierId("");
+
     } catch (err) {
       alert("Error adding invoice: " + err.message);
+    } finally {
+      setSubmitting(false);
     }
   };
 
@@ -115,9 +120,7 @@ export default function InvoiceForm() {
         <select
           className="border p-2 w-full"
           value={selectedSupplierId}
-          onChange={(e) =>
-            setSelectedSupplierId(e.target.value)
-          }
+          onChange={(e) => setSelectedSupplierId(e.target.value)}
         >
           <option value="">-- Select Supplier --</option>
           {suppliers.map((s) => (
@@ -137,7 +140,7 @@ export default function InvoiceForm() {
 
       {/* Invoice form */}
       <form onSubmit={handleSubmit} className="flex flex-col gap-4">
-        {/* Custom date picker (no "Set/Cancel" on mobile) */}
+        {/* Custom date picker */}
         <DatePicker
           selected={date}
           onChange={(d) => setDate(d)}
@@ -158,9 +161,7 @@ export default function InvoiceForm() {
           placeholder="Amount (with VAT)"
           className="border p-2"
           value={amountWithVAT}
-          onChange={(e) =>
-            setAmountWithVAT(e.target.value)
-          }
+          onChange={(e) => setAmountWithVAT(e.target.value)}
         />
 
         {/* VAT Amount now optional */}
@@ -174,12 +175,14 @@ export default function InvoiceForm() {
 
         <button
           type="submit"
-          className="bg-green-600 text-white p-2 rounded hover:bg-green-700"
+          disabled={submitting}
+          className={`bg-green-600 text-white p-2 rounded hover:bg-green-700 ${
+            submitting ? "opacity-50 cursor-not-allowed" : ""
+          }`}
         >
-          Save Invoice
+          {submitting ? "Saving..." : "Save Invoice"}
         </button>
       </form>
     </div>
   );
-  
 }
